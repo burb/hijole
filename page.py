@@ -1,3 +1,4 @@
+import cgi
 import logging
 
 def page(f):
@@ -5,6 +6,20 @@ def page(f):
     page = Page()
     page.set_handler(f)
     return page
+
+def simple(f):
+    def result(environ):
+        request = Request(environ)
+        return f(**request.params)
+    return result
+
+def typed(**types):
+    def decorator(f):
+        def result(environ):
+            request = Request(environ, types)
+            return f(**request.params)
+        return result
+    return decorator
 
 class Page:
     def __init__(self):
@@ -19,6 +34,13 @@ class Page:
             return self.handler()
         else:
             return self.handler(*args)
-    
+
+class Request:
+    def __init__(self, environ, types = {}):
+        qs = environ.get("QUERY_STRING")
+        params = cgi.parse_qs(qs)
+        for x in params:
+            params[x] = types[x](params[x][0]) if x in types else params[x][0]
+        self.params = params
     
     
