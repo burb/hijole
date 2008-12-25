@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 class Meta(type):
     def __init__(self, name, superclasses, dict):
         print("HA!")
@@ -18,10 +20,14 @@ class Element(object):
         raise NotImplementedError("My subclass must define update method")
 
     def delete(self):
-        raise NotImplementedError("My subclass must define delete method")                
+        raise NotImplementedError("My subclass must define delete method")
+
+    def relation_name(self):
+        return self.relation.__name__
 
 class Relation(object):
     __metaclass__ = Meta
+
     @classmethod
     def create(cls):
         columns = []
@@ -31,7 +37,42 @@ class Relation(object):
         return "CREATE TABLE %s (%s %s);" % (cls.__name__,
                                              ', '.join(columns),
                                              ", PRIMARY KEY (%s)" % ', '.join(cls.primary_key) if cls.primary_key != [] else "")
+    @classmethod
+    def element_iterator(cls):
+        for element in cls.__dict__.itervalues():
+            if isinstance(element, Element):
+                yield element
 
+    @classmethod
+    def delete(cls):
+        return "DROP TABLE %s" % cls.__name__
+
+    @classmethod
+    def update(cls, old):
+        result = []
+        new_elements = set(cls.element_iterator())
+        old_elements = set(old.element_iterator())
+        changes = defaultdict(lambda: ColumnChange(None, None))
+        for new in new_elements:
+            changes[new.name].new = new
+        for old in old_elements:
+            changes[old.name].old = old
+        for name, change in changes.iteritems():
+            old, new = change.old, change.new
+            if old == None:
+                result.append("ALTER TABLE %s ADD COLUMN %s" % (cls.__name__, new.create()))
+            elif new == None:
+                result.append("ALTER TABLE %s %s" % (cls.__name__, old.delete()))
+            elif new != None and old != None and not new.equal_to(old):
+                result.append(new.update(old))
+            elif new == None and old == None:
+                raise Exception("new and old can't be both None")
+        return ";".join(result + [""])
+            
+class ColumnChange:
+    def __init__(self, old, new):
+        self.old = old
+        self.new = new
         
 class PrimaryKey(Element):
     def __init__(self, *columns):
@@ -49,6 +90,15 @@ class Column(Element):
 
     def create(self):
         return "%s %s %s %s" % (self.name, self.type, "DEFAULT %s" % self.default if self.default != None else "", "NOT NULL" if self.can_be_null == False else "")
+
+    def equal_to(self, other):
+        return self.type == other.type and self.default == other.default and self.can_be_null == other.can_be_null and self.primary_key == other.primary_key
+
+    def update(self, old):
+        pass
+
+    def delete(self):
+        return "DROP COLUMN %s" % self.name
 
 class TextColumn(Column):
     def __init__(self, **kwargs):
