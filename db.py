@@ -64,7 +64,7 @@ class Relation(object):
             elif new == None:
                 result.append("ALTER TABLE %s %s" % (cls.__name__, old.delete()))
             elif new != None and old != None and not new.equal_to(old):
-                result.append(new.update(old))
+                result.extend(new.update(old))
             elif new == None and old == None:
                 raise Exception("new and old can't be both None")
         return ";".join(result + [""])
@@ -82,11 +82,18 @@ class PrimaryKey(Element):
         return "PRIMARY KEY (%s)" % ', '.join(self.columns)
 
 class Column(Element):
+    # todo!! add constraints and checks
     def __init__(self, type, default = None, can_be_null = False, primary_key = False):
         self.type = type
         self.default = default
         self.can_be_null = can_be_null
         self.primary_key = primary_key
+
+    def escaped_default(self):
+        if type(self.default) == str:
+            return "'%s'" % self.default
+        else:
+            return self.default
 
     def create(self):
         return "%s %s %s %s" % (self.name, self.type, "DEFAULT %s" % self.default if self.default != None else "", "NOT NULL" if self.can_be_null == False else "")
@@ -94,8 +101,22 @@ class Column(Element):
     def equal_to(self, other):
         return self.type == other.type and self.default == other.default and self.can_be_null == other.can_be_null and self.primary_key == other.primary_key
 
-    def update(self, old):
-        pass
+    # todo!! remove duplication
+    def update(self, other):
+        result = []
+        if self.type != other.type:
+            result.append("ALTER TABLE %s ALTER COLUMN %s TYPE %s" % (self.relation_name(), self.name, self.type))
+        if self.default != other.default:
+            if self.default == None:
+                result.append("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT" % (self.relation_name(), self.name))
+            else:
+                result.append("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s" % (self.relation_name(), self.name, self.escaped_default()))
+        if self.can_be_null != other.can_be_null:
+            if self.can_be_null == True:
+                result.append("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL" % (self.relation_name(), self.name))
+            else:
+                result.append("ALTER TABLE %s ALTER COLUMN %s SET NOT NULL" % (self.relation_name(), self.name))
+        return result
 
     def delete(self):
         return "DROP COLUMN %s" % self.name
