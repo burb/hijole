@@ -1,6 +1,10 @@
 from collections import defaultdict
 
+import logging
 import pickle
+
+logging.basicConfig(level = logging.DEBUG)
+
 
 class Meta(type):
     def __init__(self, name, superclasses, dict):
@@ -57,7 +61,21 @@ class Relation(object):
             return Meta(cls.__name__, (Relation,), d)
         else:
             return None
-    
+
+    @classmethod
+    def db_action(cls, cursor):
+        'update or create if not exists'
+        last = cls.last_from_db(cursor)
+        cls.save_to_db(cursor)
+        if last != None:
+            statement = cls.update(last)
+            if statement.strip() == "":
+                return
+        else:
+            statement = cls.create()
+        logging.debug("executing SQL: %s" % statement)
+        cursor.execute(statement)
+
     @classmethod
     def element_iterator(cls):
         for element in cls.__dict__.itervalues():
@@ -75,8 +93,9 @@ class Relation(object):
         old_elements = set(old.element_iterator())
         if old.primary_key != cls.primary_key:
             if old.primary_key != []:
-                result.append("ALTER TABLE %(name)s DROP CONSTRAINT %(name)s_pkey" % {'name': cls.__name__})
-            result.append("ALTER TABLE %s ADD PRIMARY KEY (%s)" % (cls.__name__, ', '.join(cls.primary_key)))
+                result.append("ALTER TABLE %(name)s DROP CONSTRAINT %(name)s_pkey CASCADE" % {'name': cls.__name__})
+            if cls.primary_key != []:
+                result.append("ALTER TABLE %s ADD PRIMARY KEY (%s)" % (cls.__name__, ', '.join(cls.primary_key)))
         changes = defaultdict(lambda: ColumnChange(None, None))
         for new in new_elements:
             changes[new.name].new = new
@@ -135,7 +154,7 @@ class Column(Element):
             if self.default == None:
                 result.append("ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT" % (self.relation_name(), self.name))
             else:
-                result.append("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s" % (self.relation_name(), self.name, self.escaped_default()))
+                result.append("ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s" % (self.relation_name(), self.name, self.default))
         if self.can_be_null != other.can_be_null:
             if self.can_be_null == True:
                 result.append("ALTER TABLE %s ALTER COLUMN %s DROP NOT NULL" % (self.relation_name(), self.name))
@@ -164,7 +183,7 @@ class ReferenceColumn(Column):
         self.reference = reference
 
     def create(self):
-        return "%s REFERENCES %s(%s)" % (self.name, self.reference.relation.__name__, self.reference.name)
+        return "%s %s REFERENCES %s(%s)" % (self.name, self.reference.type, self.reference.relation_name(), self.reference.name)
 
 def relation_exists(relation_name, cursor):
     return cursor.execute("SELECT * FROM pg_tables WHERE tablename = %s", (relation_name,)) != 0
