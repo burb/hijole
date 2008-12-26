@@ -1,5 +1,7 @@
 from collections import defaultdict
 
+import pickle
+
 class Meta(type):
     def __init__(self, name, superclasses, dict):
         print("HA!")
@@ -38,6 +40,25 @@ class Relation(object):
                                              ', '.join(columns),
                                              ", PRIMARY KEY (%s)" % ', '.join(cls.primary_key) if cls.primary_key != [] else "")
     @classmethod
+    def save_to_db(cls, cursor):
+        d = {}
+        for k, v in cls.__dict__.iteritems():
+            d[k] = v
+        cursor.execute("INSERT INTO HijoleRelations (relation_name, relation_pickle) VALUES (%s, %s)",
+                       (cls.__name__, pickle.dumps(d)))
+
+    @classmethod
+    def last_from_db(cls, cursor):
+        cursor.execute("SELECT relation_pickle FROM HijoleRelations WHERE relation_name = %s ORDER BY relation_update_time DESC",
+                       (cls.__name__,))
+        result = cursor.fetchone()
+        if result != None:
+            d = pickle.loads(result[0])
+            return Meta(cls.__name__, (Relation,), d)
+        else:
+            return None
+    
+    @classmethod
     def element_iterator(cls):
         for element in cls.__dict__.itervalues():
             if isinstance(element, Element):
@@ -52,6 +73,10 @@ class Relation(object):
         result = []
         new_elements = set(cls.element_iterator())
         old_elements = set(old.element_iterator())
+        if old.primary_key != cls.primary_key:
+            if old.primary_key != []:
+                result.append("ALTER TABLE %(name)s DROP CONSTRAINT %(name)s_pkey" % {'name': cls.__name__})
+            result.append("ALTER TABLE %s ADD PRIMARY KEY (%s)" % (cls.__name__, ', '.join(cls.primary_key)))
         changes = defaultdict(lambda: ColumnChange(None, None))
         for new in new_elements:
             changes[new.name].new = new
@@ -129,6 +154,10 @@ class VarCharColumn(Column):
     def __init__(self, length = 255, **kwargs):
         Column.__init__(self, "VARCHAR(%d)" % length, **kwargs)
 
+class TimestampColumn(Column):
+    def __init__(self, **kwargs):
+        Column.__init__(self, type = 'TIMESTAMP', **kwargs)
+
 class ReferenceColumn(Column):
     def __init__(self, reference, **kwargs):
         Column.__init__(self, None, **kwargs)
@@ -137,4 +166,5 @@ class ReferenceColumn(Column):
     def create(self):
         return "%s REFERENCES %s(%s)" % (self.name, self.reference.relation.__name__, self.reference.name)
 
-    
+def relation_exists(relation_name, cursor):
+    return cursor.execute("SELECT * FROM pg_tables WHERE tablename = %s", (relation_name,)) != 0
